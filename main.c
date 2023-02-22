@@ -160,6 +160,11 @@ VOID ConstructBackupHeader(_In_ EFI_GPT_HEADER* main_hdr, _Out_ EFI_GPT_HEADER* 
 	backup_hdr->NumPartitionEntries = main_hdr->NumPartitionEntries;
 	backup_hdr->PartitionEntrySize = main_hdr->PartitionEntrySize;
 	backup_hdr->Crc32OfPartitionEntries = main_hdr->Crc32OfPartitionEntries;
+	memset(backup_hdr->Reserved2, 0x00, sizeof(backup_hdr->Reserved2));
+	// Header fully built, so compute crc
+	backup_hdr->Crc32OfHeader = 0;
+	DWORD crc32 = compute_crc32(backup_hdr, backup_hdr->HeaderSize);
+	backup_hdr->Crc32OfHeader = crc32;
 }
 
 BOOL PatchPartitionGuids(HANDLE drive)
@@ -230,6 +235,19 @@ BOOL PatchPartitionGuidsEx(HANDLE drive, int lb_size)
 	// Now that we have a new header and partition entries, we need to fix the gpt header
 	// The partition entries will be copied to the first non-useable LBA
 	EFI_GPT_HEADER* new_backup_hdr = calloc(1, lb_size);
+	fp.QuadPart = gpt_header->BackupLBA * lb_size;
+	if (SetFilePointerEx(drive, fp, NULL, FILE_BEGIN) == INVALID_SET_FILE_POINTER)
+	{
+		free(gpt_header); free(partition_entries); free(new_backup_hdr);
+		return FALSE;
+	}
+	ReadFile(drive, new_backup_hdr, lb_size, &bytes_read, NULL);
+	if (bytes_read != lb_size)
+	{
+		free(gpt_header); free(partition_entries); free(new_backup_hdr);
+		return FALSE;
+	}
+
 	ConstructBackupHeader(gpt_header, new_backup_hdr);
 
 	int bytes_written = 0;
@@ -362,8 +380,8 @@ ListPartitionGuidsEx(HANDLE drive, DWORD lb_size)
 		EFI_GUID ZeroGuid = { 0 };
 		if (IsEqualGUID(&part_entry->PartitionTypeGUID, &ZeroGuid))
 			continue;
-		printf("GPT header name: %ls\n", part_entry->PartitionName);
-		printf("GPT header GUID (mixed endian): %s\n\n", FormatGuid(guid_name_buffer, part_entry->UniquePartitionGUID));
+		printf("Partition header name: %ls\n", part_entry->PartitionName);
+		printf("Partition header GUID (mixed endian): %s\n\n", FormatGuid(guid_name_buffer, part_entry->UniquePartitionGUID));
 	}
 	free(gpt_header); free(partition_entries);
 	return TRUE;
