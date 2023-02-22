@@ -284,9 +284,86 @@ BOOL PatchPartitionGuidsEx(HANDLE drive, int lb_size)
 	return bytes_written == size_of_partition_headers;
 }
 
+// This formats a guid in microsoft mixed endian. The out buffer must be 39 bytes
+char* const FormatGuid(char* const output, GUID guid)
+{
+	sprintf_s(output, 39, "{%.8lX-%.4hX-%.4hX-%.4hX-%.2hX%.2hX%.2hX%.2hX%.2hX%.2hX}", 
+		guid.Data1, guid.Data2, guid.Data3, *(WORD*)guid.Data4, 
+		guid.Data4[2], guid.Data4[3], guid.Data4[4], guid.Data4[5], guid.Data4[6], guid.Data4[7]);
+	return output;
+}
+
+BOOL ListPartitionGuids(HANDLE drive)
+{
+	return ListPartitionGuidsEx(drive, 512);
+}
+
+ListPartitionGuidsEx(HANDLE drive, DWORD lb_size)
+{
+	MASTER_BOOT_RECORD* mbr = calloc(1, lb_size);
+	DWORD bytes_read = 0;
+	ReadFile(drive, mbr, lb_size, &bytes_read, NULL);
+	if (bytes_read != lb_size)
+	{
+		free(mbr);
+		return FALSE;
+	}
+	if (!isProtectiveMbrValid(mbr))
+	{
+		free(mbr);
+		return FALSE;
+	}
+	free(mbr);
+
+	EFI_GPT_HEADER* gpt_header = calloc(1, lb_size);
+	ReadFile(drive, gpt_header, lb_size, &bytes_read, NULL);
+	if (bytes_read != lb_size)
+	{
+		free(gpt_header);
+		return FALSE;
+	}
+	if (!isGptHeaderValid(gpt_header))
+	{
+		free(gpt_header);
+		return FALSE;
+	}
+
+	int size_of_partition_headers = gpt_header->NumPartitionEntries * gpt_header->NumPartitionEntries;
+	EFI_PARTITION_ENTRY* partition_entries = calloc(1, size_of_partition_headers);
+	LARGE_INTEGER fp;
+	fp.QuadPart = gpt_header->PartitionEntriesLBA * lb_size;
+	if (SetFilePointerEx(drive, fp, NULL, FILE_BEGIN) == INVALID_SET_FILE_POINTER)
+	{
+		free(gpt_header); free(partition_entries);
+		return FALSE;
+	}
+	ReadFile(drive, partition_entries, size_of_partition_headers, &bytes_read, NULL);
+	if (bytes_read != size_of_partition_headers)
+	{
+		free(gpt_header); free(partition_entries);
+		return FALSE;
+	}
+
+	char guid_name_buffer[39];
+	printf("GPT header GUID (mixed endian): %s\n\n", FormatGuid(guid_name_buffer, gpt_header->DiskGuid));
+
+	for (BYTE* i = partition_entries; i < (BYTE*)partition_entries + size_of_partition_headers; i += gpt_header->PartitionEntrySize)
+	{
+		EFI_PARTITION_ENTRY* part_entry = (EFI_PARTITION_ENTRY*)i;
+		// If the partition type GUID is 0, the partition entry is unused
+		EFI_GUID ZeroGuid = { 0 };
+		if (IsEqualGUID(&part_entry->PartitionTypeGUID, &ZeroGuid))
+			continue;
+		printf("GPT header name: %ls\n", part_entry->PartitionName);
+		printf("GPT header GUID (mixed endian): %s\n\n", FormatGuid(guid_name_buffer, part_entry->UniquePartitionGUID));
+	}
+	free(gpt_header); free(partition_entries);
+	return TRUE;
+}
+
 int main()
 {
-	printf("Enter a PhysicalDrive number to change the guids of: ");
+	printf("Enter PhysicalDrive number: ");
 	int drive_num = 0;
 	if (scanf_s("%d", &drive_num) <= 0)
 	{
@@ -297,15 +374,33 @@ int main()
 	sprintf_s(dev_name, 40, "\\\\.\\PhysicalDrive%d", drive_num);
 	HANDLE file = CreateFileA(dev_name, FILE_READ_ACCESS | FILE_WRITE_ACCESS, 
 		FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
-	printf("file handle: %p\n", file);
+
 	if (file == INVALID_HANDLE_VALUE)
 	{
 		printf("Invalid handle, aborting\n");
 		return -1;
 	}
+	if (!ListPartitionGuids(file))
+	{
+		printf("Failed to list partition GUIDs, aborting\n");
+		return -1;
+	}
+	printf("Do you want to randomize drive and partition guids for %s ? (y/n): ", dev_name);
+	char response[2];
+	fseek(stdin, 0, SEEK_END);
+	fgets(response, 2, stdin);
+	if (tolower(response[0]) != 'y')
+	{
+		printf("Exiting...\n");
+		return 0;
+	}
+
 	if (!PatchPartitionGuids(file))
 	{
 		printf("Failed\n");
+		return -1;
 	}
+
+	printf("Successfully patched GUIDs, exiting...\n");
 	return 0;
 }
