@@ -169,6 +169,11 @@ BOOL PatchPartitionGuids(HANDLE drive)
 
 BOOL PatchPartitionGuidsEx(HANDLE drive, int lb_size)
 {
+	LARGE_INTEGER fp;
+	fp.QuadPart = 0;
+	if (SetFilePointerEx(drive, fp, NULL, FILE_BEGIN) == INVALID_SET_FILE_POINTER)
+		return -1;
+
 	MASTER_BOOT_RECORD* mbr = calloc(1, lb_size);
 	DWORD bytes_read = 0;
 	ReadFile(drive, mbr, lb_size, &bytes_read, NULL);
@@ -199,7 +204,6 @@ BOOL PatchPartitionGuidsEx(HANDLE drive, int lb_size)
 
 	int size_of_partition_headers = gpt_header->NumPartitionEntries * gpt_header->NumPartitionEntries;
 	EFI_PARTITION_ENTRY* partition_entries = calloc(1, size_of_partition_headers);
-	LARGE_INTEGER fp;
 	fp.QuadPart = gpt_header->PartitionEntriesLBA * lb_size;
 	if (SetFilePointerEx(drive, fp, NULL, FILE_BEGIN) == INVALID_SET_FILE_POINTER)
 	{
@@ -300,6 +304,11 @@ BOOL ListPartitionGuids(HANDLE drive)
 
 ListPartitionGuidsEx(HANDLE drive, DWORD lb_size)
 {
+	LARGE_INTEGER fp;
+	fp.QuadPart = 0;
+	if (SetFilePointerEx(drive, fp, NULL, FILE_BEGIN) == INVALID_SET_FILE_POINTER)
+		return -1;
+
 	MASTER_BOOT_RECORD* mbr = calloc(1, lb_size);
 	DWORD bytes_read = 0;
 	ReadFile(drive, mbr, lb_size, &bytes_read, NULL);
@@ -330,7 +339,6 @@ ListPartitionGuidsEx(HANDLE drive, DWORD lb_size)
 
 	int size_of_partition_headers = gpt_header->NumPartitionEntries * gpt_header->NumPartitionEntries;
 	EFI_PARTITION_ENTRY* partition_entries = calloc(1, size_of_partition_headers);
-	LARGE_INTEGER fp;
 	fp.QuadPart = gpt_header->PartitionEntriesLBA * lb_size;
 	if (SetFilePointerEx(drive, fp, NULL, FILE_BEGIN) == INVALID_SET_FILE_POINTER)
 	{
